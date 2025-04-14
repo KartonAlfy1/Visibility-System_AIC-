@@ -21,6 +21,8 @@ distance_to_structure = 0.0  # Distance in meters
 background_color = np.array([0, 0, 0])  # Default background color (black)
 setting_background_color = False
 sct = None  # Global mss instance
+edge_comparison = {}  # Store edge count comparisons
+edge_history = {}  # Store edge count history for each box
 
 def get_average_colors(frame, bbox):
     """Get both RGB and grayscale intensity for a region."""
@@ -123,6 +125,11 @@ def mouse_callback(event, x, y, flags, param):
                     'distance': distance_to_structure,
                     'edges': edge_count
                 }
+                # Initialize edge comparison immediately with the same edge count
+                edge_comparison[len(bbox_list)-1] = {
+                    'initial': edge_count,
+                    'current': edge_count
+                }
                 print(f"Box {len(bbox_list)} created with intensity: {intensity:.2f}, edges: {edge_count}, and distance: {distance_to_structure} meters")
         
         current_bbox = []
@@ -147,7 +154,7 @@ def initialize_camera(camera_choice):
     elif camera_choice == 3:
         # List of possible URLs to try
         urls = [
-            "rtsp://C320WS9213:visibility@192.168.0.102:554/stream1"
+            "rtsp://buth:4ytkfe@192.168.1.210/live/ch00_1"
         ]
         for url in urls:
             cap = cv2.VideoCapture(url)
@@ -155,8 +162,167 @@ def initialize_camera(camera_choice):
                 return cap
     return None
 
+def show_edge_comparison():
+    """Display edge count comparison matrix with simple bar chart comparison."""
+    if not edge_comparison:
+        # Create a blank image with a message
+        img = np.zeros((200, 600, 3), dtype=np.uint8)
+        cv2.putText(img, "No edge comparisons available yet.", (50, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(img, "Start monitoring first.", (50, 100),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    else:
+        # Calculate dimensions
+        row_height = 40
+        header_height = 90
+        matrix_height = header_height + (len(edge_comparison) * row_height) + 200  # Added height for comparison bars
+        matrix_width = 1200
+        
+        # Create a blank image for the matrix with dark gray background
+        img = np.ones((matrix_height, matrix_width, 3), dtype=np.uint8) * 40
+        
+        # Draw title background
+        cv2.rectangle(img, (0, 0), (matrix_width, 60), (60, 60, 60), -1)
+        
+        # Draw the header with black outline
+        cv2.putText(img, "Edge Count Comparison Matrix", (50, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 3)
+        cv2.putText(img, "Edge Count Comparison Matrix", (50, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        
+        # Draw header background
+        cv2.rectangle(img, (0, 60), (matrix_width, 90), (50, 50, 50), -1)
+        
+        # Draw column headers with black outline
+        headers = [("Box", 50), ("Distance (m)", 150), ("Change %", 300),
+                  ("Initial Edges (Clear Day)", 450), ("Current Edges (Non-Clear Day)", 600)]
+        
+        for text, x in headers:
+            cv2.putText(img, text, (x, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3)
+            cv2.putText(img, text, (x, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        
+        # Draw separator line
+        cv2.line(img, (50, 90), (matrix_width-50, 90), (100, 100, 100), 1)
+        
+        # Draw the data rows
+        y_pos = 120
+        
+        # Define colors for each box (up to 8 distinct colors)
+        box_colors = [
+            (0, 255, 0),    # Green
+            (0, 0, 255),    # Red
+            (255, 255, 0),  # Cyan
+            (255, 0, 255),  # Magenta
+            (0, 255, 255),  # Yellow
+            (255, 128, 0),  # Orange
+            (128, 0, 255),  # Purple
+            (0, 255, 128)   # Mint
+        ]
+        
+        # Find max edge count for scaling bars
+        max_edge_count = 0
+        for data in edge_comparison.values():
+            max_edge_count = max(max_edge_count, data['initial'], data['current'])
+        
+        bar_section_top = y_pos + (len(edge_comparison) * row_height) + 20
+        bar_height = 30
+        bar_spacing = 40
+        bar_max_width = 400
+        
+        for box_idx, data in edge_comparison.items():
+            initial_edges = data['initial']
+            current_edges = data['current']
+            distance = reference_values[box_idx]['distance']
+            change_percent = ((current_edges - initial_edges) / initial_edges * 100) if initial_edges > 0 else 0
+            
+            # Get color for this box
+            color = box_colors[box_idx % len(box_colors)]
+            
+            # Draw alternating row backgrounds
+            if box_idx % 2 == 0:
+                cv2.rectangle(img, (0, y_pos-20), (matrix_width, y_pos+20), (45, 45, 45), -1)
+            
+            # Draw the data with black outlines
+            texts = [
+                (str(box_idx), 50, color),
+                (f"{distance:.1f}", 150, (255, 255, 255)),
+                (f"{change_percent:+.1f}%", 300, color if abs(change_percent) < 20 else (0, 0, 255)),
+                (str(initial_edges), 450, (255, 255, 255)),
+                (str(current_edges), 600, (255, 255, 255))
+            ]
+            
+            for text, x, color in texts:
+                cv2.putText(img, text, (x, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3)
+                cv2.putText(img, text, (x, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            
+            # Draw comparison bars
+            bar_y = bar_section_top + (box_idx * bar_spacing)
+            
+            # Draw bar labels with black outline
+            cv2.putText(img, f"Box {box_idx}", (50, bar_y + bar_height//2),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
+            cv2.putText(img, f"Box {box_idx}", (50, bar_y + bar_height//2),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            
+            # Draw initial edge count bar
+            initial_width = int((initial_edges / max_edge_count) * bar_max_width)
+            cv2.rectangle(img, (200, bar_y), (200 + initial_width, bar_y + bar_height),
+                         (100, 100, 100), -1)  # Gray for initial
+            
+            # Draw current edge count bar
+            current_width = int((current_edges / max_edge_count) * bar_max_width)
+            bar_color = (0, 255, 0) if current_edges >= initial_edges else (0, 0, 255)
+            cv2.rectangle(img, (200, bar_y + bar_height//2),
+                         (200 + current_width, bar_y + bar_height),
+                         bar_color, -1)
+            
+            # Add edge count labels with black outline
+            cv2.putText(img, f"Initial: {initial_edges}", (210 + initial_width, bar_y + bar_height//2-5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 3)
+            cv2.putText(img, f"Initial: {initial_edges}", (210 + initial_width, bar_y + bar_height//2-5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+            
+            cv2.putText(img, f"Current: {current_edges}", (210 + current_width, bar_y + bar_height-5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 3)
+            cv2.putText(img, f"Current: {current_edges}", (210 + current_width, bar_y + bar_height-5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+            
+            y_pos += row_height
+        
+        # Add instructions with background
+        cv2.rectangle(img, (0, matrix_height-40), (matrix_width, matrix_height), (60, 60, 60), -1)
+        cv2.putText(img, "Press any key to close", (50, matrix_height-15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3)
+        cv2.putText(img, "Press any key to close", (50, matrix_height-15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
+    
+    # Show the window
+    cv2.imshow("Edge Comparison", img)
+    cv2.waitKey(0)
+    cv2.destroyWindow("Edge Comparison")
+
+def load_reference_values():
+    """Load reference values from a file."""
+    try:
+        with open('reference_values.json', 'r') as f:
+            data = json.load(f)
+            global bbox_list, reference_values, edge_comparison
+            bbox_list = data['boxes']
+            reference_values = {k: {'rgb': np.array(v['rgb']), 'intensity': float(v['intensity']), 
+                                  'distance': float(v['distance']), 'edges': int(v['edges'])} 
+                              for k, v in data['values'].items()}
+            # Initialize edge comparison with loaded values
+            edge_comparison = {k: {'initial': v['edges'], 'current': v['edges']} 
+                             for k, v in reference_values.items()}
+            print("Reference values loaded successfully")
+            print(f"Loaded {len(bbox_list)} boxes with their reference values")
+    except FileNotFoundError:
+        print("No saved reference values found")
+    except Exception as e:
+        print(f"Error loading reference values: {e}")
+
 def main():
-    global frame, monitoring, target_window, window_rect, color_change_monitoring, background_color, setting_background_color, sct
+    global frame, monitoring, target_window, window_rect, color_change_monitoring, background_color, setting_background_color, sct, edge_comparison, edge_history
     
     # Ask the user to choose between screen capture or camera
     print("Choose input source:")
@@ -205,8 +371,10 @@ def main():
     print("m: Start/stop monitoring")
     print("r: Reset boxes")
     print("s: Save reference values")
+    print("l: Load reference values")
     print("c: Toggle color change monitoring")
     print("b: Set background color")
+    print("i: Show edge count comparison matrix")
     print("q: Quit\n")
     
     # Dictionary to store edge windows and their information
@@ -215,12 +383,10 @@ def main():
     while True:
         if input_choice == 4:  # Screen capture
             try:
-                # Capture the screen using mss
                 screenshot = sct.grab(window_rect)
                 frame = np.array(screenshot)
                 if frame.size == 0:
                     continue
-                # Convert from BGRA to BGR
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
             except Exception as e:
                 print(f"Error capturing screen: {e}")
@@ -237,7 +403,6 @@ def main():
             x1, y1, x2, y2 = bbox
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
             
-            # Get current values
             rgb, intensity = get_average_colors(frame, bbox)
             
             if monitoring and i in reference_values:
@@ -252,34 +417,67 @@ def main():
                 change_edges = compute_visibility_change(edge_count, ref_edges, 4.0)
                 color_similarity = compute_color_similarity(rgb, background_color)
                 
-                # Display status
+                # Store edge count comparison
+                if i not in edge_comparison:
+                    edge_comparison[i] = {'initial': ref_edges, 'current': edge_count}
+                else:
+                    edge_comparison[i]['current'] = edge_count
+                
+                # Display status with black outline
                 color = (0, 255, 0) if change_intensity < 20 else (0, 0, 255)
                 status = f"Change: {change_intensity:.1f}%"
+                # Draw black outline
+                cv2.putText(frame, status, (x1, y1-20), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
+                # Draw colored text
                 cv2.putText(frame, status, (x1, y1-20), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                
+                # Show current intensity with black outline
+                cv2.putText(frame, f"I: {intensity:.1f}", (x1, y1-40),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
+                cv2.putText(frame, f"I: {intensity:.1f}", (x1, y1-40),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                
+                # Show edge count with black outline
+                cv2.putText(frame, f"Edges: {edge_count}", (x1, y2+30),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
+                cv2.putText(frame, f"Edges: {edge_count}", (x1, y2+30),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
                 
                 if color_change_monitoring and change_rgb > 0:
                     # Compute visibility percentage
                     visibility_percentage = compute_visibility_percentage(change_intensity, change_edges, color_similarity)
-                    cv2.putText(frame, f"Distance: {distance:.1f}m", (x1, y2+30),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
-                    cv2.putText(frame, f"V Ratio: {visibility_percentage:.1f}%", (x1, y2+50),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
-                    cv2.putText(frame, f"Edges: {edge_count}", (x1, y2+70),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+                    
+                    # Distance with black outline
+                    cv2.putText(frame, f"Distance: {distance:.1f}m", (x1, y2+50),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
+                    cv2.putText(frame, f"Distance: {distance:.1f}m", (x1, y2+50),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+                    
+                    # V Ratio with black outline
+                    cv2.putText(frame, f"V Ratio: {visibility_percentage:.1f}%", (x1, y2+70),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
+                    cv2.putText(frame, f"V Ratio: {visibility_percentage:.1f}%", (x1, y2+70),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
                 
-                # Show current intensity
-                cv2.putText(frame, f"I: {intensity:.1f}", (x1, y1-40),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                # Update edge history for matrix display
+                if i not in edge_history:
+                    edge_history[i] = []
+                edge_history[i] = [edge_count]  # Only store current value
             
             # Add color monitoring if enabled
             if color_change_monitoring:
                 roi = frame[min(y1, y2):max(y1, y2), min(x1, x2):max(x1, x2)]
                 if roi.size > 0:  # Ensure ROI is not empty
                     rgb_means = np.mean(roi, axis=(0, 1)).astype(int)
+                    # RGB values with black outline
+                    cv2.putText(frame, f"{rgb_means}", (x1, y2+10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
                     cv2.putText(frame, f"{rgb_means}", (x1, y2+10),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
 
+        # Show the main frame
         cv2.imshow("Visibility Monitor", frame)
 
         key = cv2.waitKey(1) & 0xFF
@@ -287,16 +485,21 @@ def main():
             break
         elif key == ord('m'):
             monitoring = not monitoring
+            if not monitoring:
+                edge_history.clear()
             print("Monitoring:", "Started" if monitoring else "Stopped")
         elif key == ord('r'):
-            # Close all edge windows before clearing boxes
             close_all_edge_windows(edge_windows)
             bbox_list.clear()
             reference_values.clear()
+            edge_comparison.clear()
+            edge_history.clear()
             monitoring = False
             print("Reset complete")
         elif key == ord('s'):
             save_reference_values()
+        elif key == ord('l'):
+            load_reference_values()
         elif key == ord('c'):
             # Toggle color change monitoring
             color_change_monitoring = not color_change_monitoring
@@ -305,6 +508,9 @@ def main():
             # Set background color
             setting_background_color = True
             print("Draw a box to set the background color")
+        elif key == ord('i'):
+            # Show edge count comparison matrix
+            show_edge_comparison()
 
     # Clean up
     if input_choice in [0, 1, 2, 3]:

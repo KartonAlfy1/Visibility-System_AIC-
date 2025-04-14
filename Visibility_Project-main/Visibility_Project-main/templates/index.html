@@ -1,0 +1,253 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Visibility Monitor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .video-container {
+            position: relative;
+            margin-bottom: 20px;
+        }
+        #video-feed {
+            width: 100%;
+            max-width: 1000px;
+            display: block;
+            margin: 0 auto;
+            border: 2px solid #333;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #fff;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .edge-comparison {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #fff;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Visibility Monitor</h1>
+        <div class="video-container">
+            <img id="video-feed" src="{{ url_for('video_feed') }}">
+        </div>
+        <div class="controls">
+            <button onclick="toggleMonitoring()">Toggle Monitoring</button>
+            <button onclick="resetBoxes()">Reset Boxes</button>
+            <button onclick="toggleColor()">Toggle Color Monitoring</button>
+            <button onclick="setBackground()">Set Background Color</button>
+            <button onclick="saveValues()">Save Reference Values</button>
+            <button onclick="showEdgeComparison()">Show Edge Comparison</button>
+        </div>
+        <div class="status">
+            <h3>Status</h3>
+            <p>Monitoring: <span id="monitoring-status">Off</span></p>
+            <p>Color Monitoring: <span id="color-status">Off</span></p>
+        </div>
+        <div class="edge-comparison" id="edge-comparison" style="display: none;">
+            <h3>Edge Comparison</h3>
+            <table id="edge-table">
+                <thead>
+                    <tr>
+                        <th>Box</th>
+                        <th>Change %</th>
+                        <th>Initial Edges</th>
+                        <th>Current Edges</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let isDrawing = false;
+        let startX, startY;
+        let boxes = [];
+        
+        const video = document.getElementById('video-feed');
+        const monitoringStatus = document.getElementById('monitoring-status');
+        const colorStatus = document.getElementById('color-status');
+        
+        video.addEventListener('mousedown', startDrawing);
+        video.addEventListener('mousemove', draw);
+        video.addEventListener('mouseup', endDrawing);
+        video.addEventListener('mouseleave', endDrawing);
+        
+        function startDrawing(e) {
+            if (!isDrawing) {
+                isDrawing = true;
+                const rect = video.getBoundingClientRect();
+                startX = e.clientX - rect.left;
+                startY = e.clientY - rect.top;
+            }
+        }
+        
+        function draw(e) {
+            if (isDrawing) {
+                const rect = video.getBoundingClientRect();
+                const currentX = e.clientX - rect.left;
+                const currentY = e.clientY - rect.top;
+                
+                // Draw temporary rectangle
+                const canvas = document.createElement('canvas');
+                canvas.width = video.width;
+                canvas.height = video.height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0);
+                ctx.strokeStyle = 'green';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(startX, startY, currentX - startX, currentY - startY);
+                video.src = canvas.toDataURL();
+            }
+        }
+        
+        function endDrawing(e) {
+            if (isDrawing) {
+                isDrawing = false;
+                const rect = video.getBoundingClientRect();
+                const endX = e.clientX - rect.left;
+                const endY = e.clientY - rect.top;
+                
+                const distance = prompt('Enter the distance from the camera to the structure (in meters):');
+                if (distance) {
+                    fetch('/api/box', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            bbox: [startX, startY, endX, endY],
+                            distance: parseFloat(distance)
+                        })
+                    });
+                }
+            }
+        }
+        
+        function toggleMonitoring() {
+            fetch('/api/control', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({command: 'monitor'})
+            })
+            .then(response => response.json())
+            .then(data => {
+                monitoringStatus.textContent = data.monitoring ? 'On' : 'Off';
+            });
+        }
+        
+        function resetBoxes() {
+            fetch('/api/control', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({command: 'reset'})
+            });
+        }
+        
+        function toggleColor() {
+            fetch('/api/control', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({command: 'color'})
+            })
+            .then(response => response.json())
+            .then(data => {
+                colorStatus.textContent = data.color_monitoring ? 'On' : 'Off';
+            });
+        }
+        
+        function setBackground() {
+            fetch('/api/control', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({command: 'background'})
+            });
+        }
+        
+        function saveValues() {
+            fetch('/api/control', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({command: 'save'})
+            });
+        }
+        
+        function showEdgeComparison() {
+            fetch('/api/edge_comparison')
+                .then(response => response.json())
+                .then(data => {
+                    const table = document.getElementById('edge-table').getElementsByTagName('tbody')[0];
+                    table.innerHTML = '';
+                    
+                    for (const [box, values] of Object.entries(data)) {
+                        const change = ((values.current - values.initial) / values.initial * 100).toFixed(1);
+                        const row = table.insertRow();
+                        row.insertCell(0).textContent = box;
+                        row.insertCell(1).textContent = change + '%';
+                        row.insertCell(2).textContent = values.initial;
+                        row.insertCell(3).textContent = values.current;
+                    }
+                    
+                    document.getElementById('edge-comparison').style.display = 'block';
+                });
+        }
+    </script>
+</body>
+</html>
